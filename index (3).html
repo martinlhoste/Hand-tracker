@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="HandTracker">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖐️</text></svg>">
+    <title>Hand Tracker</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            min-height: -webkit-fill-available;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+            padding: 10px;
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        
+        h1 {
+            color: #fff;
+            font-size: 1.4rem;
+            margin: 10px 0;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        
+        .container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            aspect-ratio: 4/3;
+            background: #000;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+        }
+        
+        video {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+        
+        canvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            transform: scaleX(-1);
+            pointer-events: none;
+        }
+        
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        
+        button {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.2);
+            padding: 14px 24px;
+            border-radius: 12px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        button:active {
+            transform: scale(0.95);
+            background: rgba(255,255,255,0.2);
+        }
+        
+        button.active {
+            background: rgba(0,210,106,0.3);
+            border-color: #00d26a;
+        }
+        
+        .status {
+            color: rgba(255,255,255,0.7);
+            margin-top: 20px;
+            font-size: 1rem;
+            text-align: center;
+        }
+        
+        .loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 1.2rem;
+            text-align: center;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(255,255,255,0.2);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <h1>🖐️ Hand Tracker</h1>
+    
+    <div class="container">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="canvas"></canvas>
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <div>Chargement...</div>
+        </div>
+    </div>
+    
+    <div class="controls">
+        <button id="switchBtn">📷 Caméra</button>
+        <button id="anglesBtn" class="active">📐 Angles</button>
+    </div>
+    
+    <div class="status" id="status">Initialisation...</div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.min.js"></script>
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+        const loadingEl = document.getElementById('loading');
+        const switchBtn = document.getElementById('switchBtn');
+        const anglesBtn = document.getElementById('anglesBtn');
+        
+        let useFrontCamera = true;
+        let showAngles = true;
+        let stream = null;
+        
+        // Couleurs des doigts
+        const fingerColors = {
+            thumb: '#FFD700',
+            index: '#00FF00',
+            middle: '#00BFFF',
+            ring: '#FF8C00',
+            pinky: '#FF69B4'
+        };
+        
+        // Connexions
+        const fingerIndices = {
+            thumb: [0, 1, 2, 3, 4],
+            index: [0, 5, 6, 7, 8],
+            middle: [0, 9, 10, 11, 12],
+            ring: [0, 13, 14, 15, 16],
+            pinky: [0, 17, 18, 19, 20]
+        };
+        
+        const palmConnections = [[5, 9], [9, 13], [13, 17], [0, 5], [0, 17]];
+        
+        // Calcul d'angle entre 3 points
+        function getAngle(p1, p2, p3) {
+            const v1 = { x: p1.x - p2.x, y: p1.y - p2.y };
+            const v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
+            const dot = v1.x * v2.x + v1.y * v2.y;
+            const m1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
+            const m2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
+            const cos = Math.max(-1, Math.min(1, dot / (m1 * m2)));
+            return Math.round(Math.acos(cos) * 180 / Math.PI);
+        }
+        
+        // Dessiner une main
+        function drawHand(landmarks) {
+            const w = canvas.width;
+            const h = canvas.height;
+            
+            // Convertir landmarks en pixels
+            const pts = landmarks.map(lm => ({
+                x: lm.x * w,
+                y: lm.y * h
+            }));
+            
+            // Paume
+            ctx.strokeStyle = 'rgba(150, 150, 150, 0.8)';
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            
+            palmConnections.forEach(([i, j]) => {
+                ctx.beginPath();
+                ctx.moveTo(pts[i].x, pts[i].y);
+                ctx.lineTo(pts[j].x, pts[j].y);
+                ctx.stroke();
+            });
+            
+            // Doigts
+            Object.entries(fingerIndices).forEach(([finger, indices]) => {
+                ctx.strokeStyle = fingerColors[finger];
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                
+                for (let i = 0; i < indices.length - 1; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(pts[indices[i]].x, pts[indices[i]].y);
+                    ctx.lineTo(pts[indices[i + 1]].x, pts[indices[i + 1]].y);
+                    ctx.stroke();
+                }
+            });
+            
+            // Points des articulations
+            pts.forEach((pt, i) => {
+                let color = '#888';
+                let radius = 5;
+                
+                // Couleur selon le doigt
+                if (i >= 1 && i <= 4) color = fingerColors.thumb;
+                else if (i >= 5 && i <= 8) color = fingerColors.index;
+                else if (i >= 9 && i <= 12) color = fingerColors.middle;
+                else if (i >= 13 && i <= 16) color = fingerColors.ring;
+                else if (i >= 17 && i <= 20) color = fingerColors.pinky;
+                
+                // Bout des doigts plus gros
+                if ([4, 8, 12, 16, 20].includes(i)) radius = 9;
+                // Poignet
+                if (i === 0) { color = '#fff'; radius = 8; }
+                
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            });
+            
+            // Angles
+            if (showAngles) {
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 12px Arial';
+                ctx.textAlign = 'left';
+                
+                const joints = [
+                    { idx: 3, pts: [2, 3, 4] },
+                    { idx: 6, pts: [5, 6, 7] },
+                    { idx: 7, pts: [6, 7, 8] },
+                    { idx: 10, pts: [9, 10, 11] },
+                    { idx: 14, pts: [13, 14, 15] },
+                    { idx: 18, pts: [17, 18, 19] }
+                ];
+                
+                joints.forEach(j => {
+                    const angle = getAngle(pts[j.pts[0]], pts[j.pts[1]], pts[j.pts[2]]);
+                    ctx.fillText(angle + '°', pts[j.idx].x + 8, pts[j.idx].y - 5);
+                });
+            }
+        }
+        
+        // Résultats MediaPipe
+        function onResults(results) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                results.multiHandLandmarks.forEach(landmarks => {
+                    drawHand(landmarks);
+                });
+                statusEl.textContent = '✋ Main détectée';
+            } else {
+                statusEl.textContent = 'Montre ta main...';
+            }
+        }
+        
+        // Initialiser MediaPipe
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`;
+            }
+        });
+        
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.5
+        });
+        
+        hands.onResults(onResults);
+        
+        // Démarrer la caméra
+        async function startCamera() {
+            // Arrêter l'ancien stream
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            
+            loadingEl.classList.remove('hidden');
+            statusEl.textContent = 'Démarrage caméra...';
+            
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: useFrontCamera ? 'user' : 'environment',
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    },
+                    audio: false
+                });
+                
+                video.srcObject = stream;
+                
+                video.onloadedmetadata = () => {
+                    loadingEl.classList.add('hidden');
+                    statusEl.textContent = 'Montre ta main...';
+                    
+                    // Boucle de détection
+                    async function detect() {
+                        if (video.readyState >= 2) {
+                            await hands.send({ image: video });
+                        }
+                        requestAnimationFrame(detect);
+                    }
+                    detect();
+                };
+                
+            } catch (err) {
+                console.error('Erreur caméra:', err);
+                loadingEl.classList.add('hidden');
+                statusEl.textContent = '❌ Erreur: ' + err.message;
+            }
+        }
+        
+        // Bouton changer caméra
+        switchBtn.addEventListener('click', () => {
+            useFrontCamera = !useFrontCamera;
+            startCamera();
+        });
+        
+        // Bouton angles
+        anglesBtn.addEventListener('click', () => {
+            showAngles = !showAngles;
+            anglesBtn.classList.toggle('active', showAngles);
+        });
+        
+        // Démarrer
+        hands.initialize().then(() => {
+            startCamera();
+        });
+    </script>
+</body>
+</html>
