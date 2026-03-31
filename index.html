@@ -6,7 +6,6 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="HandTrack">
-    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖐️</text></svg>">
     <title>Hand Tracker</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -14,13 +13,14 @@
         html, body {
             height: 100%;
             overflow: hidden;
+            touch-action: none;
         }
         
         body {
-            background: #0f0f1a;
+            background: #0a0a12;
             display: flex;
             flex-direction: column;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
             padding-top: env(safe-area-inset-top);
             padding-bottom: env(safe-area-inset-bottom);
         }
@@ -29,168 +29,222 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 8px 15px;
-            background: rgba(255,255,255,0.05);
+            padding: 6px 12px;
+            background: rgba(255,255,255,0.03);
         }
         
-        h1 {
-            color: #fff;
-            font-size: 1.1rem;
-        }
+        h1 { color: #fff; font-size: 1rem; }
         
-        .status {
-            color: #888;
-            font-size: 0.85rem;
-        }
+        .status { color: #666; font-size: 0.8rem; }
+        .status.active { color: #0f0; }
+        .status.recording { color: #f00; animation: blink 1s infinite; }
         
-        .status.active {
-            color: #00d26a;
-        }
+        @keyframes blink { 50% { opacity: 0.5; } }
         
         .container {
             flex: 1;
             position: relative;
-            overflow: hidden;
             background: #000;
         }
         
-        video {
+        video, canvas {
             position: absolute;
             top: 0; left: 0;
             width: 100%; height: 100%;
             object-fit: cover;
         }
         
-        video.front-camera {
-            transform: scaleX(-1);
-        }
+        video.mirror, canvas.mirror { transform: scaleX(-1); }
         
-        canvas {
+        .overlay {
             position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
+            top: 8px;
+            left: 8px;
+            right: 8px;
+            display: flex;
+            justify-content: space-between;
+            z-index: 10;
             pointer-events: none;
         }
         
-        canvas.front-camera {
-            transform: scaleX(-1);
+        .badge {
+            background: rgba(0,0,0,0.6);
+            color: #fff;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
         }
+        
+        .fps { color: #0f0; font-family: monospace; }
         
         .controls {
             display: flex;
-            gap: 8px;
-            padding: 10px 15px;
-            background: rgba(255,255,255,0.05);
+            gap: 6px;
+            padding: 8px;
+            background: rgba(255,255,255,0.03);
             justify-content: center;
+            flex-wrap: wrap;
         }
         
         button {
-            background: rgba(255,255,255,0.1);
-            color: white;
-            border: 1px solid rgba(255,255,255,0.2);
-            padding: 12px 18px;
-            border-radius: 10px;
-            font-size: 0.9rem;
-            cursor: pointer;
-            transition: all 0.15s;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        
-        button:active {
-            transform: scale(0.95);
-            background: rgba(255,255,255,0.2);
-        }
-        
-        button.active {
-            background: rgba(0,210,106,0.25);
-            border-color: #00d26a;
-            color: #00d26a;
-        }
-        
-        .cam-indicator {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            background: rgba(0,0,0,0.6);
+            background: rgba(255,255,255,0.08);
             color: #fff;
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            z-index: 10;
+            border: 1px solid rgba(255,255,255,0.15);
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            cursor: pointer;
         }
         
-        .fps {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: rgba(0,0,0,0.6);
-            color: #0f0;
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            font-family: monospace;
-            z-index: 10;
-        }
+        button:active { background: rgba(255,255,255,0.2); transform: scale(0.95); }
+        button.active { background: rgba(0,200,100,0.2); border-color: #0c6; color: #0c6; }
+        button.rec-active { background: rgba(255,0,0,0.3); border-color: #f00; color: #f00; }
         
-        .loading-overlay {
+        .loading {
             position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            text-align: center;
             z-index: 100;
         }
         
-        .loading-overlay.hidden {
-            display: none;
-        }
-        
         .spinner {
-            width: 50px; height: 50px;
-            border: 4px solid rgba(255,255,255,0.2);
+            width: 40px; height: 40px;
+            border: 3px solid rgba(255,255,255,0.2);
             border-top-color: #fff;
             border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            margin-bottom: 15px;
+            animation: spin 0.7s linear infinite;
+            margin: 0 auto 10px;
         }
         
-        @keyframes spin {
-            to { transform: rotate(360deg); }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        .hidden { display: none !important; }
+        
+        .modal {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: #000;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
         }
         
-        .loading-text {
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            background: rgba(255,255,255,0.05);
+        }
+        
+        .modal-header h2 { color: #fff; font-size: 1rem; }
+        
+        .close-btn {
+            background: rgba(255,0,0,0.3);
+            border: none;
             color: #fff;
-            font-size: 1rem;
+            padding: 8px 15px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+        }
+        
+        .playback-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #111;
+        }
+        
+        #playbackCanvas {
+            max-width: 100%;
+            max-height: 100%;
+        }
+        
+        .playback-controls {
+            display: flex;
+            gap: 10px;
+            padding: 12px;
+            background: rgba(255,255,255,0.05);
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .playback-controls button {
+            padding: 12px 20px;
+        }
+        
+        .timeline {
+            flex: 1;
+            height: 8px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 4px;
+            position: relative;
+            max-width: 200px;
+        }
+        
+        .timeline-progress {
+            height: 100%;
+            background: #0f0;
+            border-radius: 4px;
+            width: 0%;
+            transition: width 0.1s;
+        }
+        
+        .frame-count {
+            color: #888;
+            font-size: 0.8rem;
+            min-width: 80px;
+            text-align: center;
         }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>🖐️ Hand Tracker</h1>
-        <div class="status" id="status">Initialisation...</div>
+        <div class="status" id="status">Chargement...</div>
     </div>
     
     <div class="container">
         <video id="video" playsinline autoplay muted></video>
         <canvas id="canvas"></canvas>
-        <div class="cam-indicator" id="camIndicator">📷 Avant</div>
-        <div class="fps" id="fps">-- FPS</div>
-        
-        <div class="loading-overlay" id="loading">
+        <div class="overlay">
+            <span class="badge" id="camBadge">📷 Avant</span>
+            <span class="badge fps" id="fps">-- FPS</span>
+        </div>
+        <div class="loading" id="loading">
             <div class="spinner"></div>
-            <div class="loading-text">Chargement du modèle...</div>
+            <div>Chargement...</div>
         </div>
     </div>
     
     <div class="controls">
-        <button id="switchBtn">🔄 Caméra</button>
-        <button id="anglesBtn" class="active">📐 Angles</button>
-        <button id="pointsBtn" class="active">⚪ Points</button>
+        <button id="camBtn">🔄</button>
+        <button id="anglesBtn" class="active">📐</button>
+        <button id="pointsBtn" class="active">⚪</button>
+        <button id="recBtn">⏺️ REC</button>
+        <button id="playBtn" class="hidden">▶️ Play</button>
+    </div>
+
+    <div class="modal hidden" id="modal">
+        <div class="modal-header">
+            <h2>📼 Enregistrement</h2>
+            <button class="close-btn" id="closeBtn">✕ Fermer</button>
+        </div>
+        <div class="playback-container">
+            <canvas id="playbackCanvas"></canvas>
+        </div>
+        <div class="playback-controls">
+            <button id="playPauseBtn">▶️</button>
+            <div class="timeline" id="timeline">
+                <div class="timeline-progress" id="timelineProgress"></div>
+            </div>
+            <span class="frame-count" id="frameCount">0 / 0</span>
+            <button id="speedBtn">1x</button>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.min.js"></script>
@@ -200,22 +254,48 @@
         const ctx = canvas.getContext('2d');
         const statusEl = document.getElementById('status');
         const loadingEl = document.getElementById('loading');
-        const camIndicator = document.getElementById('camIndicator');
+        const camBadge = document.getElementById('camBadge');
         const fpsEl = document.getElementById('fps');
-        const switchBtn = document.getElementById('switchBtn');
+        
+        const camBtn = document.getElementById('camBtn');
         const anglesBtn = document.getElementById('anglesBtn');
         const pointsBtn = document.getElementById('pointsBtn');
+        const recBtn = document.getElementById('recBtn');
+        const playBtn = document.getElementById('playBtn');
+        
+        const modal = document.getElementById('modal');
+        const closeBtn = document.getElementById('closeBtn');
+        const playbackCanvas = document.getElementById('playbackCanvas');
+        const playbackCtx = playbackCanvas.getContext('2d');
+        const playPauseBtn = document.getElementById('playPauseBtn');
+        const timeline = document.getElementById('timeline');
+        const timelineProgress = document.getElementById('timelineProgress');
+        const frameCountEl = document.getElementById('frameCount');
+        const speedBtn = document.getElementById('speedBtn');
         
         let useFrontCamera = true;
         let showAngles = true;
         let showPoints = true;
         let stream = null;
-        let lastTime = performance.now();
-        let frameCount = 0;
-        let fps = 0;
         
-        // Couleurs
-        const fingerColors = {
+        let lastTime = performance.now();
+        let frameCounter = 0;
+        let currentFps = 0;
+        
+        let smoothedLandmarks = null;
+        const SMOOTHING = 0.5;
+        
+        let isRecording = false;
+        let recordedFrames = [];
+        let recordStartTime = 0;
+        
+        let isPlaying = false;
+        let playbackIndex = 0;
+        let playbackSpeed = 1;
+        let playbackRAF = null;
+        let lastPlaybackTime = 0;
+        
+        const colors = {
             thumb: '#FFD700',
             index: '#00FF00',
             middle: '#00BFFF',
@@ -231,226 +311,271 @@
             pinky: [0, 17, 18, 19, 20]
         };
         
-        const palmConnections = [[5, 9], [9, 13], [13, 17], [0, 5], [0, 17], [5, 17]];
+        const palmConn = [[5,9], [9,13], [13,17], [0,5], [0,17]];
         
-        function getAngle(p1, p2, p3) {
-            const v1 = { x: p1.x - p2.x, y: p1.y - p2.y };
-            const v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
-            const dot = v1.x * v2.x + v1.y * v2.y;
-            const m1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
-            const m2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
-            const cos = Math.max(-1, Math.min(1, dot / (m1 * m2)));
-            return Math.round(Math.acos(cos) * 180 / Math.PI);
+        function smooth(newLandmarks) {
+            if (!smoothedLandmarks) {
+                smoothedLandmarks = newLandmarks.map(l => ({x: l.x, y: l.y, z: l.z}));
+                return smoothedLandmarks;
+            }
+            
+            for (let i = 0; i < smoothedLandmarks.length; i++) {
+                smoothedLandmarks[i].x += (newLandmarks[i].x - smoothedLandmarks[i].x) * (1 - SMOOTHING);
+                smoothedLandmarks[i].y += (newLandmarks[i].y - smoothedLandmarks[i].y) * (1 - SMOOTHING);
+                smoothedLandmarks[i].z += (newLandmarks[i].z - smoothedLandmarks[i].z) * (1 - SMOOTHING);
+            }
+            
+            return smoothedLandmarks;
         }
         
-        function drawHand(landmarks) {
-            const w = canvas.width;
-            const h = canvas.height;
+        function getAngle(p1, p2, p3) {
+            const v1 = {x: p1.x - p2.x, y: p1.y - p2.y};
+            const v2 = {x: p3.x - p2.x, y: p3.y - p2.y};
+            const dot = v1.x * v2.x + v1.y * v2.y;
+            const m1 = Math.hypot(v1.x, v1.y);
+            const m2 = Math.hypot(v2.x, v2.y);
+            return Math.round(Math.acos(Math.max(-1, Math.min(1, dot / (m1 * m2)))) * 180 / Math.PI);
+        }
+        
+        function drawHand(context, landmarks, w, h, showPts, showAng) {
+            const pts = landmarks.map(l => ({x: l.x * w, y: l.y * h}));
             
-            const pts = landmarks.map(lm => ({
-                x: lm.x * w,
-                y: lm.y * h
-            }));
-            
-            // Paume
-            ctx.strokeStyle = 'rgba(180, 180, 180, 0.9)';
-            ctx.lineWidth = 4;
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-            
-            palmConnections.forEach(([i, j]) => {
-                ctx.beginPath();
-                ctx.moveTo(pts[i].x, pts[i].y);
-                ctx.lineTo(pts[j].x, pts[j].y);
-                ctx.stroke();
+            context.strokeStyle = 'rgba(150,150,150,0.8)';
+            context.lineWidth = 3;
+            context.lineCap = 'round';
+            palmConn.forEach(([i, j]) => {
+                context.beginPath();
+                context.moveTo(pts[i].x, pts[i].y);
+                context.lineTo(pts[j].x, pts[j].y);
+                context.stroke();
             });
             
-            // Doigts
             Object.entries(fingerIndices).forEach(([finger, indices]) => {
-                const color = fingerColors[finger];
-                ctx.strokeStyle = color;
-                ctx.lineWidth = 5;
-                ctx.lineCap = 'round';
-                
+                context.strokeStyle = colors[finger];
+                context.lineWidth = 4;
                 for (let i = 1; i < indices.length - 1; i++) {
-                    ctx.beginPath();
-                    ctx.moveTo(pts[indices[i]].x, pts[indices[i]].y);
-                    ctx.lineTo(pts[indices[i + 1]].x, pts[indices[i + 1]].y);
-                    ctx.stroke();
+                    context.beginPath();
+                    context.moveTo(pts[indices[i]].x, pts[indices[i]].y);
+                    context.lineTo(pts[indices[i+1]].x, pts[indices[i+1]].y);
+                    context.stroke();
                 }
             });
             
-            // Points
-            if (showPoints) {
+            if (showPts) {
                 pts.forEach((pt, i) => {
-                    let color = '#888';
-                    let radius = 6;
+                    let color = '#666', r = 5;
+                    if (i <= 4) color = colors.thumb;
+                    else if (i <= 8) color = colors.index;
+                    else if (i <= 12) color = colors.middle;
+                    else if (i <= 16) color = colors.ring;
+                    else color = colors.pinky;
                     
-                    if (i >= 1 && i <= 4) color = fingerColors.thumb;
-                    else if (i >= 5 && i <= 8) color = fingerColors.index;
-                    else if (i >= 9 && i <= 12) color = fingerColors.middle;
-                    else if (i >= 13 && i <= 16) color = fingerColors.ring;
-                    else if (i >= 17 && i <= 20) color = fingerColors.pinky;
+                    if ([4,8,12,16,20].includes(i)) r = 10;
+                    else if (i === 0) { color = '#fff'; r = 8; }
                     
-                    if ([4, 8, 12, 16, 20].includes(i)) radius = 12;
-                    else if ([0].includes(i)) { color = '#fff'; radius = 10; }
-                    else radius = 7;
-                    
-                    ctx.beginPath();
-                    ctx.arc(pt.x + 2, pt.y + 2, radius, 0, Math.PI * 2);
-                    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-                    ctx.fill();
-                    
-                    ctx.beginPath();
-                    ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
-                    ctx.fillStyle = color;
-                    ctx.fill();
-                    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
+                    context.beginPath();
+                    context.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+                    context.fillStyle = color;
+                    context.fill();
+                    context.strokeStyle = 'rgba(0,0,0,0.4)';
+                    context.lineWidth = 1;
+                    context.stroke();
                 });
             }
             
-            // Angles
-            if (showAngles) {
-                ctx.font = 'bold 14px Arial';
-                ctx.textAlign = 'center';
+            if (showAng) {
+                context.font = 'bold 11px Arial';
+                context.textAlign = 'center';
+                context.fillStyle = '#fff';
                 
-                const joints = [
-                    { idx: 3, pts: [2, 3, 4] },
-                    { idx: 6, pts: [5, 6, 7] },
-                    { idx: 7, pts: [6, 7, 8] },
-                    { idx: 10, pts: [9, 10, 11] },
-                    { idx: 11, pts: [10, 11, 12] },
-                    { idx: 14, pts: [13, 14, 15] },
-                    { idx: 18, pts: [17, 18, 19] }
-                ];
-                
-                joints.forEach(j => {
-                    const angle = getAngle(pts[j.pts[0]], pts[j.pts[1]], pts[j.pts[2]]);
-                    const x = pts[j.idx].x;
-                    const y = pts[j.idx].y - 15;
-                    
-                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-                    const text = angle + '°';
-                    const metrics = ctx.measureText(text);
-                    ctx.fillRect(x - metrics.width/2 - 4, y - 12, metrics.width + 8, 18);
-                    
-                    ctx.fillStyle = '#fff';
-                    ctx.fillText(text, x, y);
+                [[3,[2,3,4]], [6,[5,6,7]], [10,[9,10,11]], [14,[13,14,15]], [18,[17,18,19]]].forEach(([idx, p]) => {
+                    const angle = getAngle(pts[p[0]], pts[p[1]], pts[p[2]]);
+                    context.fillText(angle + '°', pts[idx].x, pts[idx].y - 10);
                 });
             }
         }
         
         function onResults(results) {
-            if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+            if (canvas.width !== video.videoWidth) {
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
             }
             
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
-            frameCount++;
+            frameCounter++;
             const now = performance.now();
-            if (now - lastTime >= 1000) {
-                fps = frameCount;
-                frameCount = 0;
+            if (now - lastTime >= 500) {
+                currentFps = Math.round(frameCounter * 1000 / (now - lastTime));
+                frameCounter = 0;
                 lastTime = now;
-                fpsEl.textContent = fps + ' FPS';
+                fpsEl.textContent = currentFps + ' FPS';
             }
             
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                results.multiHandLandmarks.forEach(landmarks => {
-                    drawHand(landmarks);
-                });
-                statusEl.textContent = '✋ ' + results.multiHandLandmarks.length + ' main(s)';
-                statusEl.classList.add('active');
+                const landmarks = smooth(results.multiHandLandmarks[0]);
+                drawHand(ctx, landmarks, canvas.width, canvas.height, showPoints, showAngles);
+                
+                if (isRecording) {
+                    recordedFrames.push({
+                        time: now - recordStartTime,
+                        landmarks: landmarks.map(l => ({x: l.x, y: l.y, z: l.z}))
+                    });
+                }
+                
+                statusEl.textContent = isRecording ? '🔴 ' + recordedFrames.length + ' frames' : '✋ Détecté';
+                statusEl.className = 'status' + (isRecording ? ' recording' : ' active');
             } else {
-                statusEl.textContent = 'En attente...';
-                statusEl.classList.remove('active');
+                smoothedLandmarks = null;
+                statusEl.textContent = isRecording ? '🔴 REC...' : 'En attente...';
+                statusEl.className = 'status' + (isRecording ? ' recording' : '');
             }
         }
         
         const hands = new Hands({
-            locateFile: (file) => {
-                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`;
-            }
+            locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
         });
         
         hands.setOptions({
-            maxNumHands: 2,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.7,
-            minTrackingConfidence: 0.6
+            maxNumHands: 1,
+            modelComplexity: 0,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.5
         });
         
         hands.onResults(onResults);
         
         async function startCamera() {
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-            }
-            
+            if (stream) stream.getTracks().forEach(t => t.stop());
             loadingEl.classList.remove('hidden');
             
             try {
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: {
                         facingMode: useFrontCamera ? 'user' : 'environment',
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
                     },
                     audio: false
                 });
                 
                 video.srcObject = stream;
-                
-                if (useFrontCamera) {
-                    video.classList.add('front-camera');
-                    canvas.classList.add('front-camera');
-                    camIndicator.textContent = '📷 Avant';
-                } else {
-                    video.classList.remove('front-camera');
-                    canvas.classList.remove('front-camera');
-                    camIndicator.textContent = '📷 Arrière';
-                }
+                video.classList.toggle('mirror', useFrontCamera);
+                canvas.classList.toggle('mirror', useFrontCamera);
+                camBadge.textContent = useFrontCamera ? '📷 Avant' : '📷 Arrière';
                 
                 video.onloadedmetadata = () => {
                     loadingEl.classList.add('hidden');
-                    
-                    async function detect() {
-                        if (video.readyState >= 2) {
-                            await hands.send({ image: video });
-                        }
-                        requestAnimationFrame(detect);
-                    }
-                    detect();
+                    detectLoop();
                 };
-                
             } catch (err) {
                 loadingEl.classList.add('hidden');
                 statusEl.textContent = '❌ ' + err.message;
             }
         }
         
-        switchBtn.addEventListener('click', () => {
-            useFrontCamera = !useFrontCamera;
-            startCamera();
+        async function detectLoop() {
+            if (video.readyState >= 2) await hands.send({image: video});
+            requestAnimationFrame(detectLoop);
+        }
+        
+        function toggleRec() {
+            if (isRecording) {
+                isRecording = false;
+                recBtn.classList.remove('rec-active');
+                recBtn.textContent = '⏺️ REC';
+                if (recordedFrames.length > 0) playBtn.classList.remove('hidden');
+            } else {
+                recordedFrames = [];
+                recordStartTime = performance.now();
+                isRecording = true;
+                recBtn.classList.add('rec-active');
+                recBtn.textContent = '⏹️ Stop';
+                playBtn.classList.add('hidden');
+            }
+        }
+        
+        function openPlayback() {
+            if (recordedFrames.length === 0) return;
+            modal.classList.remove('hidden');
+            playbackIndex = 0;
+            isPlaying = false;
+            playbackCanvas.width = 400;
+            playbackCanvas.height = 300;
+            renderPlaybackFrame();
+        }
+        
+        function closePlayback() {
+            modal.classList.add('hidden');
+            stopPlayback();
+        }
+        
+        function renderPlaybackFrame() {
+            const frame = recordedFrames[playbackIndex];
+            if (!frame) return;
+            
+            playbackCtx.fillStyle = '#111';
+            playbackCtx.fillRect(0, 0, playbackCanvas.width, playbackCanvas.height);
+            drawHand(playbackCtx, frame.landmarks, playbackCanvas.width, playbackCanvas.height, true, true);
+            
+            const progress = recordedFrames.length > 1 ? (playbackIndex / (recordedFrames.length - 1)) * 100 : 0;
+            timelineProgress.style.width = progress + '%';
+            frameCountEl.textContent = (playbackIndex + 1) + ' / ' + recordedFrames.length;
+        }
+        
+        function playbackLoop(timestamp) {
+            if (!isPlaying) return;
+            
+            if (timestamp - lastPlaybackTime >= 33 / playbackSpeed) {
+                lastPlaybackTime = timestamp;
+                playbackIndex = (playbackIndex + 1) % recordedFrames.length;
+                renderPlaybackFrame();
+            }
+            
+            playbackRAF = requestAnimationFrame(playbackLoop);
+        }
+        
+        function startPlayback() {
+            isPlaying = true;
+            playPauseBtn.textContent = '⏸️';
+            lastPlaybackTime = performance.now();
+            playbackRAF = requestAnimationFrame(playbackLoop);
+        }
+        
+        function stopPlayback() {
+            isPlaying = false;
+            playPauseBtn.textContent = '▶️';
+            if (playbackRAF) cancelAnimationFrame(playbackRAF);
+        }
+        
+        function togglePlayback() {
+            if (isPlaying) stopPlayback();
+            else startPlayback();
+        }
+        
+        function cycleSpeed() {
+            const speeds = [0.5, 1, 2, 4];
+            playbackSpeed = speeds[(speeds.indexOf(playbackSpeed) + 1) % speeds.length];
+            speedBtn.textContent = playbackSpeed + 'x';
+        }
+        
+        timeline.addEventListener('click', e => {
+            const rect = timeline.getBoundingClientRect();
+            const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            playbackIndex = Math.floor(pct * (recordedFrames.length - 1));
+            renderPlaybackFrame();
         });
         
-        anglesBtn.addEventListener('click', () => {
-            showAngles = !showAngles;
-            anglesBtn.classList.toggle('active', showAngles);
-        });
+        camBtn.onclick = () => { useFrontCamera = !useFrontCamera; startCamera(); };
+        anglesBtn.onclick = () => { showAngles = !showAngles; anglesBtn.classList.toggle('active', showAngles); };
+        pointsBtn.onclick = () => { showPoints = !showPoints; pointsBtn.classList.toggle('active', showPoints); };
+        recBtn.onclick = toggleRec;
+        playBtn.onclick = openPlayback;
+        closeBtn.onclick = closePlayback;
+        playPauseBtn.onclick = togglePlayback;
+        speedBtn.onclick = cycleSpeed;
         
-        pointsBtn.addEventListener('click', () => {
-            showPoints = !showPoints;
-            pointsBtn.classList.toggle('active', showPoints);
-        });
-        
-        hands.initialize().then(() => {
-            startCamera();
-        });
+        hands.initialize().then(startCamera);
     </script>
 </body>
 </html>
