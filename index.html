@@ -13,7 +13,6 @@
         html, body {
             height: 100%;
             overflow: hidden;
-            touch-action: none;
             background: #000;
         }
         
@@ -29,89 +28,63 @@
             align-items: center;
             padding: 8px 12px;
             padding-top: max(8px, env(safe-area-inset-top));
-            background: rgba(20,20,30,0.95);
+            background: #111;
         }
         
         h1 { color: #fff; font-size: 1rem; }
-        
         .status { color: #666; font-size: 0.8rem; }
         .status.active { color: #0f0; }
-        .status.recording { color: #f00; animation: blink 1s infinite; }
-        
-        @keyframes blink { 50% { opacity: 0.5; } }
+        .status.recording { color: #f00; }
         
         .container {
             flex: 1;
             position: relative;
             background: #000;
-            overflow: hidden;
         }
         
-        video {
+        video, canvas {
             position: absolute;
             top: 0; left: 0;
             width: 100%; height: 100%;
             object-fit: cover;
         }
         
-        video.mirror { transform: scaleX(-1); }
-        
-        #canvas {
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            object-fit: cover;
-        }
-        
-        #canvas.mirror { transform: scaleX(-1); }
-        
-        .overlay {
-            position: absolute;
-            top: 8px;
-            left: 8px;
-            right: 8px;
-            display: flex;
-            justify-content: space-between;
-            z-index: 10;
-            pointer-events: none;
-        }
+        video.mirror, canvas.mirror { transform: scaleX(-1); }
         
         .badge {
+            position: absolute;
+            top: 8px;
+            padding: 5px 10px;
             background: rgba(0,0,0,0.7);
             color: #fff;
-            padding: 5px 10px;
             border-radius: 12px;
             font-size: 0.75rem;
+            z-index: 10;
         }
         
-        .fps { color: #0f0; font-family: monospace; }
+        .badge.left { left: 8px; }
+        .badge.right { right: 8px; color: #0f0; font-family: monospace; }
         
         .controls {
             display: flex;
-            gap: 6px;
-            padding: 10px;
-            padding-bottom: max(10px, env(safe-area-inset-bottom));
-            background: rgba(20,20,30,0.95);
+            gap: 8px;
+            padding: 12px;
+            padding-bottom: max(12px, env(safe-area-inset-bottom));
+            background: #111;
             justify-content: center;
-            flex-wrap: wrap;
         }
         
         button {
-            background: rgba(255,255,255,0.1);
+            background: #222;
             color: #fff;
-            border: 1px solid rgba(255,255,255,0.2);
-            padding: 12px 16px;
+            border: 1px solid #444;
+            padding: 12px 18px;
             border-radius: 10px;
             font-size: 0.9rem;
-            cursor: pointer;
-            -webkit-tap-highlight-color: transparent;
         }
         
-        button:active { background: rgba(255,255,255,0.25); }
-        button.active { background: rgba(0,200,100,0.25); border-color: #0c6; color: #0c6; }
-        button.rec-active { background: rgba(255,0,0,0.35); border-color: #f44; color: #f44; }
-        
-        .hidden { display: none !important; }
+        button.active { background: #052; border-color: #0a4; color: #0f0; }
+        button.rec { background: #400; border-color: #a00; color: #f66; }
         
         .loading {
             position: absolute;
@@ -119,19 +92,9 @@
             transform: translate(-50%, -50%);
             color: #fff;
             text-align: center;
-            z-index: 100;
         }
         
-        .spinner {
-            width: 36px; height: 36px;
-            border: 3px solid rgba(255,255,255,0.2);
-            border-top-color: #fff;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            margin: 0 auto 10px;
-        }
-        
-        @keyframes spin { to { transform: rotate(360deg); } }
+        .hidden { display: none !important; }
     </style>
 </head>
 <body>
@@ -143,22 +106,16 @@
     <div class="container">
         <video id="video" playsinline autoplay muted></video>
         <canvas id="canvas"></canvas>
-        <div class="overlay">
-            <span class="badge" id="camBadge">📷 Avant</span>
-            <span class="badge fps" id="fps">--</span>
-        </div>
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <div>Chargement...</div>
-        </div>
+        <div class="badge left" id="camBadge">📷 Avant</div>
+        <div class="badge right" id="fps">-- fps</div>
+        <div class="loading" id="loading">Chargement...</div>
     </div>
     
     <div class="controls">
-        <button id="camBtn">🔄 Cam</button>
+        <button id="camBtn">🔄</button>
         <button id="anglesBtn" class="active">📐</button>
         <button id="pointsBtn" class="active">⚪</button>
-        <button id="recBtn">⏺️ REC</button>
-        <button id="saveBtn" class="hidden">💾 Save</button>
+        <button id="recBtn">⏺️</button>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.min.js"></script>
@@ -170,94 +127,76 @@
         const loadingEl = document.getElementById('loading');
         const camBadge = document.getElementById('camBadge');
         const fpsEl = document.getElementById('fps');
-        
         const camBtn = document.getElementById('camBtn');
         const anglesBtn = document.getElementById('anglesBtn');
         const pointsBtn = document.getElementById('pointsBtn');
         const recBtn = document.getElementById('recBtn');
-        const saveBtn = document.getElementById('saveBtn');
         
         let useFrontCamera = true;
         let showAngles = true;
         let showPoints = true;
         let stream = null;
+        let isRecording = false;
+        let recordCount = 0;
         
         let lastTime = performance.now();
-        let frameCounter = 0;
+        let frames = 0;
         
-        let smoothedLandmarks = null;
-        const SMOOTHING = 0.5;
+        let smoothed = null;
+        const SMOOTH = 0.5;
         
-        let isRecording = false;
-        let recordedFrames = [];
+        const colors = ['#FFD700','#FFD700','#FFD700','#FFD700','#FFD700',
+                        '#00FF00','#00FF00','#00FF00','#00FF00',
+                        '#00BFFF','#00BFFF','#00BFFF','#00BFFF',
+                        '#FF8C00','#FF8C00','#FF8C00','#FF8C00',
+                        '#FF69B4','#FF69B4','#FF69B4','#FF69B4'];
         
-        const colors = {
-            thumb: '#FFD700',
-            index: '#00FF00',
-            middle: '#00BFFF',
-            ring: '#FF8C00',
-            pinky: '#FF69B4'
-        };
+        const fingers = [[1,2,3,4],[5,6,7,8],[9,10,11,12],[13,14,15,16],[17,18,19,20]];
+        const palm = [[0,5],[0,17],[5,9],[9,13],[13,17]];
         
-        const fingerIndices = {
-            thumb: [0, 1, 2, 3, 4],
-            index: [0, 5, 6, 7, 8],
-            middle: [0, 9, 10, 11, 12],
-            ring: [0, 13, 14, 15, 16],
-            pinky: [0, 17, 18, 19, 20]
-        };
-        
-        const palmConn = [[5,9], [9,13], [13,17], [0,5], [0,17]];
-        
-        function smooth(newLandmarks) {
-            if (!smoothedLandmarks) {
-                smoothedLandmarks = newLandmarks.map(l => ({x: l.x, y: l.y, z: l.z}));
-                return smoothedLandmarks;
+        function smooth(lm) {
+            if (!smoothed) {
+                smoothed = lm.map(p => ({x:p.x, y:p.y}));
+                return smoothed;
             }
             for (let i = 0; i < 21; i++) {
-                smoothedLandmarks[i].x += (newLandmarks[i].x - smoothedLandmarks[i].x) * (1 - SMOOTHING);
-                smoothedLandmarks[i].y += (newLandmarks[i].y - smoothedLandmarks[i].y) * (1 - SMOOTHING);
-                smoothedLandmarks[i].z += (newLandmarks[i].z - smoothedLandmarks[i].z) * (1 - SMOOTHING);
+                smoothed[i].x += (lm[i].x - smoothed[i].x) * (1 - SMOOTH);
+                smoothed[i].y += (lm[i].y - smoothed[i].y) * (1 - SMOOTH);
             }
-            return smoothedLandmarks;
+            return smoothed;
         }
         
-        function getAngle(p1, p2, p3) {
-            const v1x = p1.x - p2.x, v1y = p1.y - p2.y;
-            const v2x = p3.x - p2.x, v2y = p3.y - p2.y;
-            const dot = v1x * v2x + v1y * v2y;
-            const m = Math.hypot(v1x, v1y) * Math.hypot(v2x, v2y);
+        function angle(a, b, c) {
+            const v1x = a.x - b.x, v1y = a.y - b.y;
+            const v2x = c.x - b.x, v2y = c.y - b.y;
+            const dot = v1x*v2x + v1y*v2y;
+            const m = Math.hypot(v1x,v1y) * Math.hypot(v2x,v2y);
             if (m === 0) return 0;
-            return Math.round(Math.acos(Math.max(-1, Math.min(1, dot / m))) * 180 / Math.PI);
+            return Math.round(Math.acos(Math.max(-1,Math.min(1,dot/m))) * 180 / Math.PI);
         }
         
-        function drawHand(landmarks, w, h) {
-            const pts = [];
-            for (let i = 0; i < 21; i++) {
-                pts.push({x: landmarks[i].x * w, y: landmarks[i].y * h});
-            }
+        function draw(landmarks, w, h) {
+            const p = landmarks.map(l => ({x: l.x*w, y: l.y*h}));
             
-            // Paume
-            ctx.strokeStyle = 'rgba(150,150,150,0.8)';
+            // Palm
+            ctx.strokeStyle = '#888';
             ctx.lineWidth = 3;
             ctx.lineCap = 'round';
-            for (const [i, j] of palmConn) {
+            for (const [i,j] of palm) {
                 ctx.beginPath();
-                ctx.moveTo(pts[i].x, pts[i].y);
-                ctx.lineTo(pts[j].x, pts[j].y);
+                ctx.moveTo(p[i].x, p[i].y);
+                ctx.lineTo(p[j].x, p[j].y);
                 ctx.stroke();
             }
             
-            // Doigts
-            const fingerKeys = ['thumb', 'index', 'middle', 'ring', 'pinky'];
-            for (const finger of fingerKeys) {
-                const indices = fingerIndices[finger];
-                ctx.strokeStyle = colors[finger];
-                ctx.lineWidth = 4;
-                for (let i = 1; i < 4; i++) {
+            // Fingers
+            ctx.lineWidth = 4;
+            for (const f of fingers) {
+                ctx.strokeStyle = colors[f[0]];
+                for (let i = 0; i < 3; i++) {
                     ctx.beginPath();
-                    ctx.moveTo(pts[indices[i]].x, pts[indices[i]].y);
-                    ctx.lineTo(pts[indices[i+1]].x, pts[indices[i+1]].y);
+                    ctx.moveTo(p[f[i]].x, p[f[i]].y);
+                    ctx.lineTo(p[f[i+1]].x, p[f[i+1]].y);
                     ctx.stroke();
                 }
             }
@@ -265,19 +204,10 @@
             // Points
             if (showPoints) {
                 for (let i = 0; i < 21; i++) {
-                    let color = '#666', r = 5;
-                    if (i <= 4) color = colors.thumb;
-                    else if (i <= 8) color = colors.index;
-                    else if (i <= 12) color = colors.middle;
-                    else if (i <= 16) color = colors.ring;
-                    else color = colors.pinky;
-                    
-                    if (i === 4 || i === 8 || i === 12 || i === 16 || i === 20) r = 9;
-                    else if (i === 0) { color = '#fff'; r = 7; }
-                    
+                    const r = [4,8,12,16,20].includes(i) ? 10 : (i === 0 ? 8 : 6);
                     ctx.beginPath();
-                    ctx.arc(pts[i].x, pts[i].y, r, 0, 6.28);
-                    ctx.fillStyle = color;
+                    ctx.arc(p[i].x, p[i].y, r, 0, 6.28);
+                    ctx.fillStyle = i === 0 ? '#fff' : colors[i];
                     ctx.fill();
                 }
             }
@@ -287,55 +217,48 @@
                 ctx.font = 'bold 11px Arial';
                 ctx.textAlign = 'center';
                 ctx.fillStyle = '#fff';
-                const anglesData = [[3,2,3,4], [6,5,6,7], [10,9,10,11], [14,13,14,15], [18,17,18,19]];
-                for (const [idx, a, b, c] of anglesData) {
-                    const angle = getAngle(pts[a], pts[b], pts[c]);
-                    ctx.fillText(angle + '°', pts[idx].x, pts[idx].y - 10);
+                const ang = [[3,2,4],[6,5,7],[10,9,11],[14,13,15],[18,17,19]];
+                for (const [i,a,b] of ang) {
+                    const v = angle(p[a], p[i], p[b]);
+                    ctx.fillText(v + '°', p[i].x, p[i].y - 12);
                 }
             }
         }
         
         function onResults(results) {
-            const w = video.videoWidth;
-            const h = video.videoHeight;
+            const w = video.videoWidth || 640;
+            const h = video.videoHeight || 480;
             
-            if (canvas.width !== w || canvas.height !== h) {
-                canvas.width = w;
-                canvas.height = h;
-            }
+            if (canvas.width !== w) canvas.width = w;
+            if (canvas.height !== h) canvas.height = h;
             
             ctx.clearRect(0, 0, w, h);
             
-            // FPS
-            frameCounter++;
+            frames++;
             const now = performance.now();
             if (now - lastTime >= 500) {
-                fpsEl.textContent = Math.round(frameCounter * 2) + ' fps';
-                frameCounter = 0;
+                fpsEl.textContent = Math.round(frames * 2) + ' fps';
+                frames = 0;
                 lastTime = now;
             }
             
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const raw = results.multiHandLandmarks[0];
-                const landmarks = smooth(raw);
-                drawHand(landmarks, w, h);
+                const lm = smooth(results.multiHandLandmarks[0]);
+                draw(lm, w, h);
                 
-                // Recording
-                if (isRecording) {
-                    recordedFrames.push(JSON.stringify(landmarks));
-                }
+                if (isRecording) recordCount++;
                 
-                statusEl.textContent = isRecording ? '🔴 ' + recordedFrames.length : '✋';
-                statusEl.className = 'status' + (isRecording ? ' recording' : ' active');
+                statusEl.textContent = isRecording ? '🔴 ' + recordCount : '✋';
+                statusEl.className = 'status ' + (isRecording ? 'recording' : 'active');
             } else {
-                smoothedLandmarks = null;
-                statusEl.textContent = isRecording ? '🔴 ...' : '...';
+                smoothed = null;
+                statusEl.textContent = isRecording ? '🔴' : '...';
                 statusEl.className = 'status' + (isRecording ? ' recording' : '');
             }
         }
         
         const hands = new Hands({
-            locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
+            locateFile: f => 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/' + f
         });
         
         hands.setOptions({
@@ -353,122 +276,37 @@
             
             try {
                 stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        facingMode: useFrontCamera ? 'user' : 'environment',
-                        width: { ideal: 640 },
-                        height: { ideal: 480 }
-                    },
+                    video: { facingMode: useFrontCamera ? 'user' : 'environment', width: 640, height: 480 },
                     audio: false
                 });
-                
                 video.srcObject = stream;
                 video.classList.toggle('mirror', useFrontCamera);
                 canvas.classList.toggle('mirror', useFrontCamera);
                 camBadge.textContent = useFrontCamera ? '📷 Avant' : '📷 Arrière';
-                
                 video.onloadedmetadata = () => {
                     loadingEl.classList.add('hidden');
-                    detectLoop();
+                    loop();
                 };
-            } catch (err) {
+            } catch (e) {
                 loadingEl.classList.add('hidden');
-                statusEl.textContent = '❌ ' + err.message;
+                statusEl.textContent = '❌ Erreur';
             }
         }
         
-        async function detectLoop() {
-            if (video.readyState >= 2) {
-                await hands.send({image: video});
-            }
-            requestAnimationFrame(detectLoop);
+        async function loop() {
+            if (video.readyState >= 2) await hands.send({image: video});
+            requestAnimationFrame(loop);
         }
-        
-        // Recording
-        recBtn.onclick = () => {
-            if (isRecording) {
-                isRecording = false;
-                recBtn.classList.remove('rec-active');
-                recBtn.textContent = '⏺️ REC';
-                if (recordedFrames.length > 0) {
-                    saveBtn.classList.remove('hidden');
-                }
-            } else {
-                recordedFrames = [];
-                isRecording = true;
-                recBtn.classList.add('rec-active');
-                recBtn.textContent = '⏹️ STOP';
-                saveBtn.classList.add('hidden');
-            }
-        };
-        
-        // Save - ouvre une nouvelle page avec le player
-        saveBtn.onclick = () => {
-            const data = encodeURIComponent(JSON.stringify(recordedFrames));
-            const playerHTML = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Replay</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#111;display:flex;flex-direction:column;height:100vh;font-family:sans-serif}
-canvas{flex:1;width:100%}
-.bar{display:flex;gap:8px;padding:12px;background:#222;align-items:center;padding-bottom:max(12px,env(safe-area-inset-bottom))}
-button{background:#333;color:#fff;border:none;padding:10px 16px;border-radius:8px;font-size:1rem}
-.timeline{flex:1;height:6px;background:#444;border-radius:3px}
-.progress{height:100%;background:#0f0;border-radius:3px;width:0%}
-.info{color:#888;font-size:0.8rem}
-</style>
-</head>
-<body>
-<canvas id="c"></canvas>
-<div class="bar">
-<button id="pp">⏸️</button>
-<div class="timeline" id="tl"><div class="progress" id="pr"></div></div>
-<span class="info" id="info">0/0</span>
-<button id="sp">1x</button>
-</div>
-<script>
-const frames=JSON.parse(decodeURIComponent("${data}")).map(f=>JSON.parse(f));
-const c=document.getElementById('c'),ctx=c.getContext('2d');
-const pp=document.getElementById('pp'),tl=document.getElementById('tl');
-const pr=document.getElementById('pr'),info=document.getElementById('info');
-const sp=document.getElementById('sp');
-let idx=0,playing=true,speed=1;
-const colors={thumb:'#FFD700',index:'#00FF00',middle:'#00BFFF',ring:'#FF8C00',pinky:'#FF69B4'};
-const fingers={thumb:[0,1,2,3,4],index:[0,5,6,7,8],middle:[0,9,10,11,12],ring:[0,13,14,15,16],pinky:[0,17,18,19,20]};
-const palm=[[5,9],[9,13],[13,17],[0,5],[0,17]];
-function resize(){c.width=c.offsetWidth*2;c.height=c.offsetHeight*2}
-resize();window.onresize=resize;
-function draw(){
-const lm=frames[idx];if(!lm)return;
-const w=c.width,h=c.height;
-const pts=lm.map(l=>({x:l.x*w,y:l.y*h}));
-ctx.fillStyle='#111';ctx.fillRect(0,0,w,h);
-ctx.lineCap='round';ctx.strokeStyle='#888';ctx.lineWidth=4;
-palm.forEach(([i,j])=>{ctx.beginPath();ctx.moveTo(pts[i].x,pts[i].y);ctx.lineTo(pts[j].x,pts[j].y);ctx.stroke()});
-Object.entries(fingers).forEach(([f,ids])=>{ctx.strokeStyle=colors[f];ctx.lineWidth=6;for(let i=1;i<4;i++){ctx.beginPath();ctx.moveTo(pts[ids[i]].x,pts[ids[i]].y);ctx.lineTo(pts[ids[i+1]].x,pts[ids[i+1]].y);ctx.stroke()}});
-pts.forEach((p,i)=>{let col='#666',r=8;if(i<=4)col=colors.thumb;else if(i<=8)col=colors.index;else if(i<=12)col=colors.middle;else if(i<=16)col=colors.ring;else col=colors.pinky;if([4,8,12,16,20].includes(i))r=14;else if(i===0){col='#fff';r=12}ctx.beginPath();ctx.arc(p.x,p.y,r,0,6.28);ctx.fillStyle=col;ctx.fill()});
-pr.style.width=(idx/(frames.length-1))*100+'%';
-info.textContent=(idx+1)+'/'+frames.length;
-}
-function loop(){if(playing){idx=(idx+1)%frames.length}draw();setTimeout(loop,33/speed)}
-loop();
-pp.onclick=()=>{playing=!playing;pp.textContent=playing?'⏸️':'▶️'};
-sp.onclick=()=>{const s=[0.5,1,2,4];speed=s[(s.indexOf(speed)+1)%4];sp.textContent=speed+'x'};
-tl.onclick=e=>{const r=tl.getBoundingClientRect();idx=Math.floor((e.clientX-r.left)/r.width*(frames.length-1));draw()};
-</script>
-</body>
-</html>`;
-            const blob = new Blob([playerHTML], {type: 'text/html'});
-            const url = URL.createObjectURL(blob);
-            window.open(url, '_blank');
-        };
         
         camBtn.onclick = () => { useFrontCamera = !useFrontCamera; startCamera(); };
         anglesBtn.onclick = () => { showAngles = !showAngles; anglesBtn.classList.toggle('active', showAngles); };
         pointsBtn.onclick = () => { showPoints = !showPoints; pointsBtn.classList.toggle('active', showPoints); };
+        recBtn.onclick = () => {
+            isRecording = !isRecording;
+            recBtn.classList.toggle('rec', isRecording);
+            recBtn.textContent = isRecording ? '⏹️' : '⏺️';
+            if (isRecording) recordCount = 0;
+        };
         
         hands.initialize().then(startCamera);
     </script>
