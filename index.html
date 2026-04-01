@@ -38,6 +38,7 @@
         .status { color: #666; font-size: 0.8rem; }
         .status.active { color: #0f0; }
         .status.recording { color: #f00; animation: blink 1s infinite; }
+        .status.playback { color: #0af; }
         
         @keyframes blink { 50% { opacity: 0.5; } }
         
@@ -99,6 +100,7 @@
         button:active { background: rgba(255,255,255,0.2); transform: scale(0.95); }
         button.active { background: rgba(0,200,100,0.2); border-color: #0c6; color: #0c6; }
         button.rec-active { background: rgba(255,0,0,0.3); border-color: #f00; color: #f00; }
+        button.play-active { background: rgba(0,170,255,0.3); border-color: #0af; color: #0af; }
         
         .loading {
             position: absolute;
@@ -122,60 +124,13 @@
         
         .hidden { display: none !important; }
         
-        .modal {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            background: #000;
-            z-index: 1000;
+        .playback-bar {
             display: flex;
-            flex-direction: column;
-        }
-        
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 10px 15px;
-            background: rgba(255,255,255,0.05);
-        }
-        
-        .modal-header h2 { color: #fff; font-size: 1rem; }
-        
-        .close-btn {
-            background: rgba(255,0,0,0.3);
-            border: none;
-            color: #fff;
-            padding: 8px 15px;
-            border-radius: 6px;
-            font-size: 0.9rem;
-        }
-        
-        .playback-container {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #111;
-        }
-        
-        #playbackCanvas {
-            max-width: 100%;
-            max-height: 100%;
-            background: #111;
-        }
-        
-        .playback-controls {
-            display: flex;
-            gap: 10px;
-            padding: 12px;
-            background: rgba(255,255,255,0.05);
+            gap: 8px;
+            padding: 8px;
+            background: rgba(0,170,255,0.1);
             justify-content: center;
             align-items: center;
-        }
-        
-        .playback-controls button {
-            padding: 12px 20px;
         }
         
         .timeline {
@@ -183,21 +138,20 @@
             height: 8px;
             background: rgba(255,255,255,0.2);
             border-radius: 4px;
-            position: relative;
-            max-width: 200px;
+            max-width: 150px;
         }
         
         .timeline-progress {
             height: 100%;
-            background: #0f0;
+            background: #0af;
             border-radius: 4px;
             width: 0%;
         }
         
-        .frame-count {
-            color: #888;
-            font-size: 0.8rem;
-            min-width: 80px;
+        .frame-info {
+            color: #0af;
+            font-size: 0.75rem;
+            min-width: 60px;
             text-align: center;
         }
     </style>
@@ -221,30 +175,23 @@
         </div>
     </div>
     
-    <div class="controls">
+    <!-- Barre de lecture (cachée par défaut) -->
+    <div class="playback-bar hidden" id="playbackBar">
+        <button id="playPauseBtn">⏸️</button>
+        <div class="timeline" id="timeline">
+            <div class="timeline-progress" id="timelineProgress"></div>
+        </div>
+        <span class="frame-info" id="frameInfo">0/0</span>
+        <button id="speedBtn">1x</button>
+        <button id="stopPlayBtn">✕</button>
+    </div>
+    
+    <div class="controls" id="mainControls">
         <button id="camBtn">🔄</button>
         <button id="anglesBtn" class="active">📐</button>
         <button id="pointsBtn" class="active">⚪</button>
         <button id="recBtn">⏺️ REC</button>
         <button id="playBtn" class="hidden">▶️ Play</button>
-    </div>
-
-    <div class="modal hidden" id="modal">
-        <div class="modal-header">
-            <h2>📼 Enregistrement</h2>
-            <button class="close-btn" id="closeBtn">✕ Fermer</button>
-        </div>
-        <div class="playback-container">
-            <canvas id="playbackCanvas" width="400" height="300"></canvas>
-        </div>
-        <div class="playback-controls">
-            <button id="playPauseBtn">▶️</button>
-            <div class="timeline" id="timeline">
-                <div class="timeline-progress" id="timelineProgress"></div>
-            </div>
-            <span class="frame-count" id="frameCount">0 / 0</span>
-            <button id="speedBtn">1x</button>
-        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.min.js"></script>
@@ -257,26 +204,26 @@
         const camBadge = document.getElementById('camBadge');
         const fpsEl = document.getElementById('fps');
         
+        const mainControls = document.getElementById('mainControls');
         const camBtn = document.getElementById('camBtn');
         const anglesBtn = document.getElementById('anglesBtn');
         const pointsBtn = document.getElementById('pointsBtn');
         const recBtn = document.getElementById('recBtn');
         const playBtn = document.getElementById('playBtn');
         
-        const modal = document.getElementById('modal');
-        const closeBtn = document.getElementById('closeBtn');
-        const playbackCanvas = document.getElementById('playbackCanvas');
-        const playbackCtx = playbackCanvas.getContext('2d');
+        const playbackBar = document.getElementById('playbackBar');
         const playPauseBtn = document.getElementById('playPauseBtn');
         const timeline = document.getElementById('timeline');
         const timelineProgress = document.getElementById('timelineProgress');
-        const frameCountEl = document.getElementById('frameCount');
+        const frameInfo = document.getElementById('frameInfo');
         const speedBtn = document.getElementById('speedBtn');
+        const stopPlayBtn = document.getElementById('stopPlayBtn');
         
         let useFrontCamera = true;
         let showAngles = true;
         let showPoints = true;
         let stream = null;
+        let detecting = true;
         
         let lastTime = performance.now();
         let frameCounter = 0;
@@ -286,13 +233,13 @@
         
         let isRecording = false;
         let recordedFrames = [];
-        let recordStartTime = 0;
         
+        // Mode lecture
+        let isPlaybackMode = false;
         let isPlaying = false;
         let playbackIndex = 0;
         let playbackSpeed = 1;
-        let playbackRAF = null;
-        let lastPlaybackTime = 0;
+        let playTimer = null;
         
         const colors = {
             thumb: '#FFD700',
@@ -377,9 +324,6 @@
                     context.arc(pt.x, pt.y, r, 0, Math.PI * 2);
                     context.fillStyle = color;
                     context.fill();
-                    context.strokeStyle = 'rgba(0,0,0,0.4)';
-                    context.lineWidth = 1;
-                    context.stroke();
                 });
             }
             
@@ -396,6 +340,8 @@
         }
         
         function onResults(results) {
+            if (isPlaybackMode) return;
+            
             if (canvas.width !== video.videoWidth) {
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
@@ -416,9 +362,7 @@
                 drawHand(ctx, landmarks, canvas.width, canvas.height, showPoints, showAngles);
                 
                 if (isRecording) {
-                    recordedFrames.push({
-                        landmarks: landmarks.map(l => ({x: l.x, y: l.y, z: l.z}))
-                    });
+                    recordedFrames.push(landmarks.map(l => ({x: l.x, y: l.y, z: l.z})));
                 }
                 
                 statusEl.textContent = isRecording ? '🔴 ' + recordedFrames.length : '✋ Détecté';
@@ -473,10 +417,13 @@
         }
         
         async function detectLoop() {
-            if (video.readyState >= 2) await hands.send({image: video});
+            if (!isPlaybackMode && video.readyState >= 2) {
+                await hands.send({image: video});
+            }
             requestAnimationFrame(detectLoop);
         }
         
+        // === RECORDING ===
         function toggleRec() {
             if (isRecording) {
                 isRecording = false;
@@ -485,7 +432,6 @@
                 if (recordedFrames.length > 0) playBtn.classList.remove('hidden');
             } else {
                 recordedFrames = [];
-                recordStartTime = performance.now();
                 isRecording = true;
                 recBtn.classList.add('rec-active');
                 recBtn.textContent = '⏹️ Stop';
@@ -493,71 +439,77 @@
             }
         }
         
-        function openPlayback() {
-            if (recordedFrames.length < 2) {
-                alert('Pas assez de frames enregistrées');
-                return;
-            }
-            modal.classList.remove('hidden');
-            playbackIndex = 0;
-            isPlaying = false;
-            playPauseBtn.textContent = '▶️';
-            renderPlaybackFrame();
-        }
-        
-        function closePlayback() {
-            modal.classList.add('hidden');
-            stopPlayback();
-        }
-        
-        function renderPlaybackFrame() {
-            if (recordedFrames.length === 0) return;
-            if (playbackIndex < 0) playbackIndex = 0;
-            if (playbackIndex >= recordedFrames.length) playbackIndex = recordedFrames.length - 1;
+        // === PLAYBACK ===
+        function startPlaybackMode() {
+            if (recordedFrames.length < 2) return;
             
-            const frame = recordedFrames[playbackIndex];
-            if (!frame || !frame.landmarks) return;
-            
-            playbackCtx.fillStyle = '#111';
-            playbackCtx.fillRect(0, 0, playbackCanvas.width, playbackCanvas.height);
-            drawHand(playbackCtx, frame.landmarks, playbackCanvas.width, playbackCanvas.height, true, true);
-            
-            const progress = recordedFrames.length > 1 ? (playbackIndex / (recordedFrames.length - 1)) * 100 : 0;
-            timelineProgress.style.width = progress + '%';
-            frameCountEl.textContent = (playbackIndex + 1) + ' / ' + recordedFrames.length;
-        }
-        
-        function playbackLoop() {
-            if (!isPlaying) return;
-            
-            playbackIndex++;
-            if (playbackIndex >= recordedFrames.length) {
-                playbackIndex = 0;
-            }
-            renderPlaybackFrame();
-            
-            playbackRAF = setTimeout(playbackLoop, 33 / playbackSpeed);
-        }
-        
-        function startPlayback() {
-            if (recordedFrames.length === 0) return;
+            isPlaybackMode = true;
             isPlaying = true;
-            playPauseBtn.textContent = '⏸️';
-            playbackLoop();
+            playbackIndex = 0;
+            
+            // Cache la vidéo, montre le canvas
+            video.style.display = 'none';
+            canvas.classList.remove('mirror');
+            canvas.width = 400;
+            canvas.height = 300;
+            
+            // UI
+            mainControls.classList.add('hidden');
+            playbackBar.classList.remove('hidden');
+            statusEl.textContent = '▶️ Lecture';
+            statusEl.className = 'status playback';
+            fpsEl.textContent = recordedFrames.length + ' frames';
+            
+            playFrame();
         }
         
-        function stopPlayback() {
+        function stopPlaybackMode() {
+            isPlaybackMode = false;
             isPlaying = false;
-            playPauseBtn.textContent = '▶️';
-            if (playbackRAF) {
-                clearTimeout(playbackRAF);
-                playbackRAF = null;
+            if (playTimer) {
+                clearTimeout(playTimer);
+                playTimer = null;
+            }
+            
+            // Remet la vidéo
+            video.style.display = '';
+            canvas.classList.toggle('mirror', useFrontCamera);
+            
+            // UI
+            mainControls.classList.remove('hidden');
+            playbackBar.classList.add('hidden');
+            statusEl.textContent = 'En attente...';
+            statusEl.className = 'status';
+        }
+        
+        function playFrame() {
+            if (!isPlaybackMode) return;
+            
+            // Dessine la frame
+            ctx.fillStyle = '#111';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            if (recordedFrames[playbackIndex]) {
+                drawHand(ctx, recordedFrames[playbackIndex], canvas.width, canvas.height, showPoints, showAngles);
+            }
+            
+            // Update UI
+            const pct = (playbackIndex / (recordedFrames.length - 1)) * 100;
+            timelineProgress.style.width = pct + '%';
+            frameInfo.textContent = (playbackIndex + 1) + '/' + recordedFrames.length;
+            
+            // Prochaine frame si en lecture
+            if (isPlaying) {
+                playbackIndex++;
+                if (playbackIndex >= recordedFrames.length) playbackIndex = 0;
+                playTimer = setTimeout(playFrame, 33 / playbackSpeed);
             }
         }
         
-        function togglePlayback() {
-            if (isPlaying) stopPlayback();
-            else startPlayback();
+        function togglePlay() {
+            isPlaying = !isPlaying;
+            playPauseBtn.textContent = isPlaying ? '⏸️' : '▶️';
+            if (isPlaying) playFrame();
         }
         
         function cycleSpeed() {
@@ -567,23 +519,26 @@
             speedBtn.textContent = playbackSpeed + 'x';
         }
         
-        timeline.addEventListener('click', e => {
-            if (recordedFrames.length === 0) return;
-            const rect = timeline.getBoundingClientRect();
-            const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-            playbackIndex = Math.floor(pct * (recordedFrames.length - 1));
-            renderPlaybackFrame();
-        });
-        
+        // Events
         camBtn.onclick = () => { useFrontCamera = !useFrontCamera; startCamera(); };
         anglesBtn.onclick = () => { showAngles = !showAngles; anglesBtn.classList.toggle('active', showAngles); };
         pointsBtn.onclick = () => { showPoints = !showPoints; pointsBtn.classList.toggle('active', showPoints); };
         recBtn.onclick = toggleRec;
-        playBtn.onclick = openPlayback;
-        closeBtn.onclick = closePlayback;
-        playPauseBtn.onclick = togglePlayback;
-        speedBtn.onclick = cycleSpeed;
+        playBtn.onclick = startPlaybackMode;
         
+        playPauseBtn.onclick = togglePlay;
+        speedBtn.onclick = cycleSpeed;
+        stopPlayBtn.onclick = stopPlaybackMode;
+        
+        timeline.onclick = e => {
+            if (recordedFrames.length === 0) return;
+            const rect = timeline.getBoundingClientRect();
+            const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            playbackIndex = Math.floor(pct * (recordedFrames.length - 1));
+            if (!isPlaying) playFrame();
+        };
+        
+        // Start
         hands.initialize().then(startCamera);
     </script>
 </body>
