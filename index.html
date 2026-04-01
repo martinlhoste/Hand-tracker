@@ -162,6 +162,7 @@
         #playbackCanvas {
             max-width: 100%;
             max-height: 100%;
+            background: #111;
         }
         
         .playback-controls {
@@ -191,7 +192,6 @@
             background: #0f0;
             border-radius: 4px;
             width: 0%;
-            transition: width 0.1s;
         }
         
         .frame-count {
@@ -235,7 +235,7 @@
             <button class="close-btn" id="closeBtn">✕ Fermer</button>
         </div>
         <div class="playback-container">
-            <canvas id="playbackCanvas"></canvas>
+            <canvas id="playbackCanvas" width="400" height="300"></canvas>
         </div>
         <div class="playback-controls">
             <button id="playPauseBtn">▶️</button>
@@ -280,7 +280,6 @@
         
         let lastTime = performance.now();
         let frameCounter = 0;
-        let currentFps = 0;
         
         let smoothedLandmarks = null;
         const SMOOTHING = 0.5;
@@ -318,13 +317,11 @@
                 smoothedLandmarks = newLandmarks.map(l => ({x: l.x, y: l.y, z: l.z}));
                 return smoothedLandmarks;
             }
-            
             for (let i = 0; i < smoothedLandmarks.length; i++) {
                 smoothedLandmarks[i].x += (newLandmarks[i].x - smoothedLandmarks[i].x) * (1 - SMOOTHING);
                 smoothedLandmarks[i].y += (newLandmarks[i].y - smoothedLandmarks[i].y) * (1 - SMOOTHING);
                 smoothedLandmarks[i].z += (newLandmarks[i].z - smoothedLandmarks[i].z) * (1 - SMOOTHING);
             }
-            
             return smoothedLandmarks;
         }
         
@@ -334,10 +331,13 @@
             const dot = v1.x * v2.x + v1.y * v2.y;
             const m1 = Math.hypot(v1.x, v1.y);
             const m2 = Math.hypot(v2.x, v2.y);
+            if (m1 === 0 || m2 === 0) return 0;
             return Math.round(Math.acos(Math.max(-1, Math.min(1, dot / (m1 * m2)))) * 180 / Math.PI);
         }
         
         function drawHand(context, landmarks, w, h, showPts, showAng) {
+            if (!landmarks || landmarks.length < 21) return;
+            
             const pts = landmarks.map(l => ({x: l.x * w, y: l.y * h}));
             
             context.strokeStyle = 'rgba(150,150,150,0.8)';
@@ -406,10 +406,9 @@
             frameCounter++;
             const now = performance.now();
             if (now - lastTime >= 500) {
-                currentFps = Math.round(frameCounter * 1000 / (now - lastTime));
+                fpsEl.textContent = Math.round(frameCounter * 1000 / (now - lastTime)) + ' FPS';
                 frameCounter = 0;
                 lastTime = now;
-                fpsEl.textContent = currentFps + ' FPS';
             }
             
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
@@ -418,12 +417,11 @@
                 
                 if (isRecording) {
                     recordedFrames.push({
-                        time: now - recordStartTime,
                         landmarks: landmarks.map(l => ({x: l.x, y: l.y, z: l.z}))
                     });
                 }
                 
-                statusEl.textContent = isRecording ? '🔴 ' + recordedFrames.length + ' frames' : '✋ Détecté';
+                statusEl.textContent = isRecording ? '🔴 ' + recordedFrames.length : '✋ Détecté';
                 statusEl.className = 'status' + (isRecording ? ' recording' : ' active');
             } else {
                 smoothedLandmarks = null;
@@ -496,12 +494,14 @@
         }
         
         function openPlayback() {
-            if (recordedFrames.length === 0) return;
+            if (recordedFrames.length < 2) {
+                alert('Pas assez de frames enregistrées');
+                return;
+            }
             modal.classList.remove('hidden');
             playbackIndex = 0;
             isPlaying = false;
-            playbackCanvas.width = 400;
-            playbackCanvas.height = 300;
+            playPauseBtn.textContent = '▶️';
             renderPlaybackFrame();
         }
         
@@ -511,8 +511,12 @@
         }
         
         function renderPlaybackFrame() {
+            if (recordedFrames.length === 0) return;
+            if (playbackIndex < 0) playbackIndex = 0;
+            if (playbackIndex >= recordedFrames.length) playbackIndex = recordedFrames.length - 1;
+            
             const frame = recordedFrames[playbackIndex];
-            if (!frame) return;
+            if (!frame || !frame.landmarks) return;
             
             playbackCtx.fillStyle = '#111';
             playbackCtx.fillRect(0, 0, playbackCanvas.width, playbackCanvas.height);
@@ -523,29 +527,32 @@
             frameCountEl.textContent = (playbackIndex + 1) + ' / ' + recordedFrames.length;
         }
         
-        function playbackLoop(timestamp) {
+        function playbackLoop() {
             if (!isPlaying) return;
             
-            if (timestamp - lastPlaybackTime >= 33 / playbackSpeed) {
-                lastPlaybackTime = timestamp;
-                playbackIndex = (playbackIndex + 1) % recordedFrames.length;
-                renderPlaybackFrame();
+            playbackIndex++;
+            if (playbackIndex >= recordedFrames.length) {
+                playbackIndex = 0;
             }
+            renderPlaybackFrame();
             
-            playbackRAF = requestAnimationFrame(playbackLoop);
+            playbackRAF = setTimeout(playbackLoop, 33 / playbackSpeed);
         }
         
         function startPlayback() {
+            if (recordedFrames.length === 0) return;
             isPlaying = true;
             playPauseBtn.textContent = '⏸️';
-            lastPlaybackTime = performance.now();
-            playbackRAF = requestAnimationFrame(playbackLoop);
+            playbackLoop();
         }
         
         function stopPlayback() {
             isPlaying = false;
             playPauseBtn.textContent = '▶️';
-            if (playbackRAF) cancelAnimationFrame(playbackRAF);
+            if (playbackRAF) {
+                clearTimeout(playbackRAF);
+                playbackRAF = null;
+            }
         }
         
         function togglePlayback() {
@@ -555,11 +562,13 @@
         
         function cycleSpeed() {
             const speeds = [0.5, 1, 2, 4];
-            playbackSpeed = speeds[(speeds.indexOf(playbackSpeed) + 1) % speeds.length];
+            const idx = speeds.indexOf(playbackSpeed);
+            playbackSpeed = speeds[(idx + 1) % speeds.length];
             speedBtn.textContent = playbackSpeed + 'x';
         }
         
         timeline.addEventListener('click', e => {
+            if (recordedFrames.length === 0) return;
             const rect = timeline.getBoundingClientRect();
             const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
             playbackIndex = Math.floor(pct * (recordedFrames.length - 1));
