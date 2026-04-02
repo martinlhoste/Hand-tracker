@@ -35,6 +35,7 @@
         .status { color: #666; font-size: 0.8rem; }
         .status.active { color: #0f0; }
         .status.recording { color: #f00; }
+        .status.playback { color: #0af; }
         
         .container {
             flex: 1;
@@ -85,6 +86,7 @@
         
         button.active { background: #052; border-color: #0a4; color: #0f0; }
         button.rec { background: #400; border-color: #a00; color: #f66; }
+        button.play { background: #024; border-color: #08a; color: #0af; }
         
         .loading {
             position: absolute;
@@ -111,11 +113,20 @@
         <div class="loading" id="loading">Chargement...</div>
     </div>
     
-    <div class="controls">
+    <div class="controls" id="liveControls">
         <button id="camBtn">🔄</button>
         <button id="anglesBtn" class="active">📐</button>
         <button id="pointsBtn" class="active">⚪</button>
         <button id="recBtn">⏺️</button>
+        <button id="playBtn" class="hidden">▶️</button>
+    </div>
+    
+    <div class="controls hidden" id="playControls">
+        <button id="backBtn">⏮️</button>
+        <button id="ppBtn">⏸️</button>
+        <button id="fwdBtn">⏭️</button>
+        <button id="speedBtn">1x</button>
+        <button id="stopBtn">✕</button>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.min.js"></script>
@@ -127,20 +138,37 @@
         const loadingEl = document.getElementById('loading');
         const camBadge = document.getElementById('camBadge');
         const fpsEl = document.getElementById('fps');
+        
+        const liveControls = document.getElementById('liveControls');
+        const playControls = document.getElementById('playControls');
         const camBtn = document.getElementById('camBtn');
         const anglesBtn = document.getElementById('anglesBtn');
         const pointsBtn = document.getElementById('pointsBtn');
         const recBtn = document.getElementById('recBtn');
+        const playBtn = document.getElementById('playBtn');
+        
+        const backBtn = document.getElementById('backBtn');
+        const ppBtn = document.getElementById('ppBtn');
+        const fwdBtn = document.getElementById('fwdBtn');
+        const speedBtn = document.getElementById('speedBtn');
+        const stopBtn = document.getElementById('stopBtn');
         
         let useFrontCamera = true;
         let showAngles = true;
         let showPoints = true;
         let stream = null;
+        
         let isRecording = false;
-        let recordCount = 0;
+        let recorded = [];
+        
+        let isPlaybackMode = false;
+        let isPlaying = false;
+        let playIdx = 0;
+        let playSpeed = 1;
+        let playTimer = null;
         
         let lastTime = performance.now();
-        let frames = 0;
+        let frameCount = 0;
         
         let smoothed = null;
         const SMOOTH = 0.5;
@@ -175,10 +203,14 @@
             return Math.round(Math.acos(Math.max(-1,Math.min(1,dot/m))) * 180 / Math.PI);
         }
         
-        function draw(landmarks, w, h) {
+        function draw(landmarks, w, h, bgColor) {
+            if (bgColor) {
+                ctx.fillStyle = bgColor;
+                ctx.fillRect(0, 0, w, h);
+            }
+            
             const p = landmarks.map(l => ({x: l.x*w, y: l.y*h}));
             
-            // Palm
             ctx.strokeStyle = '#888';
             ctx.lineWidth = 3;
             ctx.lineCap = 'round';
@@ -189,7 +221,6 @@
                 ctx.stroke();
             }
             
-            // Fingers
             ctx.lineWidth = 4;
             for (const f of fingers) {
                 ctx.strokeStyle = colors[f[0]];
@@ -201,7 +232,6 @@
                 }
             }
             
-            // Points
             if (showPoints) {
                 for (let i = 0; i < 21; i++) {
                     const r = [4,8,12,16,20].includes(i) ? 10 : (i === 0 ? 8 : 6);
@@ -212,7 +242,6 @@
                 }
             }
             
-            // Angles
             if (showAngles) {
                 ctx.font = 'bold 11px Arial';
                 ctx.textAlign = 'center';
@@ -226,6 +255,8 @@
         }
         
         function onResults(results) {
+            if (isPlaybackMode) return;
+            
             const w = video.videoWidth || 640;
             const h = video.videoHeight || 480;
             
@@ -234,21 +265,23 @@
             
             ctx.clearRect(0, 0, w, h);
             
-            frames++;
+            frameCount++;
             const now = performance.now();
             if (now - lastTime >= 500) {
-                fpsEl.textContent = Math.round(frames * 2) + ' fps';
-                frames = 0;
+                fpsEl.textContent = Math.round(frameCount * 2) + ' fps';
+                frameCount = 0;
                 lastTime = now;
             }
             
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const lm = smooth(results.multiHandLandmarks[0]);
-                draw(lm, w, h);
+                draw(lm, w, h, null);
                 
-                if (isRecording) recordCount++;
+                if (isRecording) {
+                    recorded.push(lm.map(p => ({x:p.x, y:p.y})));
+                }
                 
-                statusEl.textContent = isRecording ? '🔴 ' + recordCount : '✋';
+                statusEl.textContent = isRecording ? '🔴 ' + recorded.length : '✋';
                 statusEl.className = 'status ' + (isRecording ? 'recording' : 'active');
             } else {
                 smoothed = null;
@@ -280,6 +313,7 @@
                     audio: false
                 });
                 video.srcObject = stream;
+                video.style.display = '';
                 video.classList.toggle('mirror', useFrontCamera);
                 canvas.classList.toggle('mirror', useFrontCamera);
                 camBadge.textContent = useFrontCamera ? '📷 Avant' : '📷 Arrière';
@@ -294,19 +328,102 @@
         }
         
         async function loop() {
-            if (video.readyState >= 2) await hands.send({image: video});
+            if (!isPlaybackMode && video.readyState >= 2) {
+                await hands.send({image: video});
+            }
             requestAnimationFrame(loop);
         }
         
-        camBtn.onclick = () => { useFrontCamera = !useFrontCamera; startCamera(); };
-        anglesBtn.onclick = () => { showAngles = !showAngles; anglesBtn.classList.toggle('active', showAngles); };
-        pointsBtn.onclick = () => { showPoints = !showPoints; pointsBtn.classList.toggle('active', showPoints); };
+        // === RECORDING ===
         recBtn.onclick = () => {
             isRecording = !isRecording;
             recBtn.classList.toggle('rec', isRecording);
             recBtn.textContent = isRecording ? '⏹️' : '⏺️';
-            if (isRecording) recordCount = 0;
+            if (isRecording) {
+                recorded = [];
+                playBtn.classList.add('hidden');
+            } else if (recorded.length > 5) {
+                playBtn.classList.remove('hidden');
+            }
         };
+        
+        // === PLAYBACK ===
+        function startPlayback() {
+            if (recorded.length < 5) return;
+            
+            isPlaybackMode = true;
+            isPlaying = true;
+            playIdx = 0;
+            
+            video.style.display = 'none';
+            canvas.classList.remove('mirror');
+            canvas.width = 400;
+            canvas.height = 300;
+            
+            liveControls.classList.add('hidden');
+            playControls.classList.remove('hidden');
+            camBadge.textContent = '📼 Replay';
+            ppBtn.textContent = '⏸️';
+            
+            playFrame();
+        }
+        
+        function stopPlayback() {
+            isPlaybackMode = false;
+            isPlaying = false;
+            if (playTimer) clearTimeout(playTimer);
+            
+            liveControls.classList.remove('hidden');
+            playControls.classList.add('hidden');
+            
+            startCamera();
+        }
+        
+        function playFrame() {
+            if (!isPlaybackMode) return;
+            
+            draw(recorded[playIdx], canvas.width, canvas.height, '#111');
+            
+            statusEl.textContent = '▶️ ' + (playIdx + 1) + '/' + recorded.length;
+            statusEl.className = 'status playback';
+            fpsEl.textContent = playSpeed + 'x';
+            
+            if (isPlaying) {
+                playIdx++;
+                if (playIdx >= recorded.length) playIdx = 0;
+                playTimer = setTimeout(playFrame, 33 / playSpeed);
+            }
+        }
+        
+        playBtn.onclick = startPlayback;
+        stopBtn.onclick = stopPlayback;
+        
+        ppBtn.onclick = () => {
+            isPlaying = !isPlaying;
+            ppBtn.textContent = isPlaying ? '⏸️' : '▶️';
+            if (isPlaying) playFrame();
+        };
+        
+        backBtn.onclick = () => {
+            playIdx = Math.max(0, playIdx - 10);
+            if (!isPlaying) playFrame();
+        };
+        
+        fwdBtn.onclick = () => {
+            playIdx = Math.min(recorded.length - 1, playIdx + 10);
+            if (!isPlaying) playFrame();
+        };
+        
+        speedBtn.onclick = () => {
+            const speeds = [0.5, 1, 2, 4];
+            const i = speeds.indexOf(playSpeed);
+            playSpeed = speeds[(i + 1) % 4];
+            speedBtn.textContent = playSpeed + 'x';
+        };
+        
+        camBtn.onclick = () => { useFrontCamera = !useFrontCamera; startCamera(); };
+        anglesBtn.onclick = () => { showAngles = !showAngles; anglesBtn.classList.toggle('active', showAngles); };
+        pointsBtn.onclick = () => { showPoints = !showPoints; pointsBtn.classList.toggle('active', showPoints); };
         
         hands.initialize().then(startCamera);
     </script>
