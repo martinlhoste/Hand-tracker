@@ -86,7 +86,6 @@
         
         button.active { background: #052; border-color: #0a4; color: #0f0; }
         button.rec { background: #400; border-color: #a00; color: #f66; }
-        button.play { background: #024; border-color: #08a; color: #0af; }
         
         .loading {
             position: absolute;
@@ -105,7 +104,7 @@
         <div class="status" id="status">Chargement...</div>
     </div>
     
-    <div class="container">
+    <div class="container" id="container">
         <video id="video" playsinline autoplay muted></video>
         <canvas id="canvas"></canvas>
         <div class="badge left" id="camBadge">📷 Avant</div>
@@ -133,6 +132,7 @@
     <script>
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
+        const container = document.getElementById('container');
         const ctx = canvas.getContext('2d');
         const statusEl = document.getElementById('status');
         const loadingEl = document.getElementById('loading');
@@ -172,6 +172,10 @@
         
         let smoothed = null;
         const SMOOTH = 0.5;
+        
+        // Dimensions sauvegardées
+        let videoW = 640;
+        let videoH = 480;
         
         const colors = ['#FFD700','#FFD700','#FFD700','#FFD700','#FFD700',
                         '#00FF00','#00FF00','#00FF00','#00FF00',
@@ -259,6 +263,8 @@
             
             const w = video.videoWidth || 640;
             const h = video.videoHeight || 480;
+            videoW = w;
+            videoH = h;
             
             if (canvas.width !== w) canvas.width = w;
             if (canvas.height !== h) canvas.height = h;
@@ -355,10 +361,13 @@
             isPlaying = true;
             playIdx = 0;
             
+            // Cache la vidéo
             video.style.display = 'none';
             canvas.classList.remove('mirror');
-            canvas.width = 400;
-            canvas.height = 300;
+            
+            // Garde les mêmes dimensions que la vidéo
+            canvas.width = videoW;
+            canvas.height = videoH;
             
             liveControls.classList.add('hidden');
             playControls.classList.remove('hidden');
@@ -382,7 +391,10 @@
         function playFrame() {
             if (!isPlaybackMode) return;
             
-            draw(recorded[playIdx], canvas.width, canvas.height, '#111');
+            const w = canvas.width;
+            const h = canvas.height;
+            
+            draw(recorded[playIdx], w, h, '#111');
             
             statusEl.textContent = '▶️ ' + (playIdx + 1) + '/' + recorded.length;
             statusEl.className = 'status playback';
